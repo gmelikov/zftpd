@@ -87,6 +87,9 @@ This is the physical ceiling of a 1 GbE connection. It is achieved out of the bo
 
 **Transfer engine**
 - `sendfile` zero-copy fast path (Linux · BSD · macOS)
+- PS4/PS5 FTP and HTTP downloads use buffered reads on exFAT/FAT, PFS and
+  nullfs mounts, and when mount detection fails, to avoid incompatible vnode
+  pagers. Other filesystems retain the zero-copy path.
 - Fallback to buffered I/O when encrypted
 - Backpressure-aware send loop, EINTR-safe
 - Upload resume: `REST` + `STOR`
@@ -370,6 +373,13 @@ on disk. Paused jobs stay paused, and failed
 jobs remain visible for retry. The Transfers view can delete a saved partial
 and its record, or use Start over to delete it and start the same link from
 zero. Removing a completed record leaves the completed file untouched.
+
+On PS5, `/data/zftpd/instance.pid` is a saved control identity, not a lock.
+After a reboot its PID may belong to another process: startup only refuses
+replacement for a verified zftpd payload or an instance that authenticated the
+shutdown request. Stale or malformed identities are removed after that check.
+`transfers.state` is retained for download recovery and never acts as an
+instance lock.
 
 ### Artifacts
 

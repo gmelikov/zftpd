@@ -24,8 +24,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef INSTANCE_DIR
 #define INSTANCE_DIR "/data/zftpd"
+#endif
+#ifndef INSTANCE_FILE
 #define INSTANCE_FILE INSTANCE_DIR "/instance.pid"
+#endif
 #define INSTANCE_PORT 28888
 #define INSTANCE_PAYLOAD_THREAD "zftpd.elf"
 #define INSTANCE_HANDSHAKE_WAIT_MS 5000U
@@ -179,7 +183,7 @@ static int write_identity(void) {
   }
 
   char temp[128];
-  int n = snprintf(temp, sizeof(temp), INSTANCE_FILE ".%d", (int)getpid());
+  int n = snprintf(temp, sizeof(temp), "%s.%d", INSTANCE_FILE, (int)getpid());
   if (n <= 0 || (size_t)n >= sizeof(temp)) return -1;
 
   int fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
@@ -196,8 +200,8 @@ static void remove_identity(void) {
   (void)unlink(INSTANCE_FILE);
 }
 
-/* Only the payload that owns the file may remove it: after a restart the file
- * may already describe the new instance. */
+/* A matching token authenticates the live control listener; a pid in a file
+ * alone does not, since the console can reuse it after a reboot. */
 static int request_previous_stop(uint64_t token) {
   char command[64];
   if (ftp_instance_stop_command_format(command, sizeof(command), token) != 0) {
@@ -267,28 +271,32 @@ int instance_control_replace_previous(void) {
   pid_t previous = -1;
   uint64_t token = 0U;
   int have_identity = read_identity(&previous, &token) == 0;
+  int authenticated = 0;
 
   if (have_identity && previous == getpid()) {
     /* The file names this process: either a stale file whose pid the loader
      * reused, or a second entry point inside the same loader process. Neither
      * is another payload, so it is not evidence worth acting on. */
     printf("[zftpd] Instance file names this pid; treating it as stale\n");
-    remove_identity();
     previous = -1;
   }
 
   if (previous > 1 && process_alive(previous)) {
     if (request_previous_stop(token) == 0) {
+      authenticated = 1;
       printf("[zftpd] Previous instance accepted the shutdown request\n");
       (void)wait_for_exit(previous, INSTANCE_HANDSHAKE_WAIT_MS);
     }
   }
 
   if (!stop_verified_payloads() ||
-      (previous > 1 && process_alive(previous))) {
+      (authenticated && process_alive(previous))) {
     printf("[zftpd] A zftpd payload is still alive; refusing a second instance\n");
     return -1;
   }
+  /* Dead, malformed or reused identities cannot block startup. Keep the
+   * transfer state: it records resumable downloads, not process ownership. */
+  remove_identity();
   return 0;
 }
 

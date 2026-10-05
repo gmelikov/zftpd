@@ -66,6 +66,8 @@ SOFTWARE.
 /**
  * Send up to count bytes starting at *offset and advance the offset by bytes sent.
  * Callers must handle partial transfers and EAGAIN.
+ * On PS4/PS5, filesystems with incompatible vnode pagers (or a failed mount
+ * lookup) use positional reads and socket sends before attempting sendfile.
  */
 ssize_t pal_sendfile(int sock_fd, int file_fd, off_t *offset, size_t count);
 ssize_t pal_sendfile_retry(int sock_fd, int file_fd, off_t *offset, size_t count,

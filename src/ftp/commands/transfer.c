@@ -321,7 +321,8 @@ ftp_error_t cmd_RETR(ftp_session_t *session, const char *args) {
                                   "sendfile unavailable (crypto/rate-limit active).");
   }
 
-  /* RETR is intentionally sendfile-only: zero-copy succeeds or the transfer aborts. */
+  /* The PAL uses zero-copy where safe and buffered I/O on console filesystems
+   * whose vnode pagers cannot support sendfile. */
 
   pal_socket_cork(session->data_fd);
 

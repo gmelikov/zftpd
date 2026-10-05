@@ -963,11 +963,13 @@ TEST_BINS += $(BUILD_DIR)/tests/test_alloc
 TEST_BINS += $(BUILD_DIR)/tests/test_mlst_ascii
 TEST_BINS += $(BUILD_DIR)/tests/test_list_flag
 TEST_BINS += $(BUILD_DIR)/tests/test_instance
+TEST_BINS += $(BUILD_DIR)/tests/test_instance_control
 TEST_BINS += $(BUILD_DIR)/tests/test_chmod
 TEST_BINS += $(BUILD_DIR)/tests/test_copy_atomic
 TEST_BINS += $(BUILD_DIR)/tests/test_ftp_commands
 TEST_BINS += $(BUILD_DIR)/tests/test_fileio_tree
 TEST_BINS += $(BUILD_DIR)/tests/test_fileio_basic
+TEST_BINS += $(BUILD_DIR)/tests/test_sendfile_console
 TEST_BINS += $(BUILD_DIR)/tests/test_ps5_fw_offsets
 ifeq ($(ENABLE_ZHTTPD),1)
 TEST_BINS += $(BUILD_DIR)/tests/test_transfer
@@ -1003,6 +1005,14 @@ test: $(OUTPUT_ELF) $(TEST_BINS)
 	@echo "Running tests..."
 	@set -e; for t in $(TEST_BINS); do ./$$t; done
 endif
+
+$(BUILD_DIR)/tests/test_instance_control: tests/test_instance_control.c src/app/instance_control.c tests/instance_control_stubs/sys/user.h tests/instance_control_stubs/sys/sysctl.h $(LIB_OBJECTS) | $(BUILD_DIR)/tests
+	@echo "  [CC]  $<"
+	@$(CXX_LINK) $(CFLAGS) -Itests/instance_control_stubs -o $@ -x c $< -x none $(LIB_OBJECTS) $(LDFLAGS) $(LIBS)
+
+$(BUILD_DIR)/tests/test_sendfile_console: tests/test_sendfile_console.c src/platform/fileio/sendfile.c tests/sendfile_stubs/sys/mount.h $(LIB_OBJECTS) | $(BUILD_DIR)/tests
+	@echo "  [CC]  $<"
+	@$(CXX_LINK) $(CFLAGS) -Itests/sendfile_stubs -o $@ -x c $< -x none $(LIB_OBJECTS) $(LDFLAGS) $(LIBS)
 
 $(BUILD_DIR)/tests/test_http_query: tests/test_http_query.c $(LIB_OBJECTS) | $(BUILD_DIR)/tests
 	@echo "  [CC]  $<"

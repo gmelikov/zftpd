@@ -1184,7 +1184,7 @@ $(OBJECTS) $(LIB_OBJECTS): $(FLAG_STAMP)
 ifneq ($(INSTALL_HELPER_ELF),)
 $(INSTALL_HELPER_ELF): src/platform/ps5/install_helper/install_helper.c | $(BIN_DIR)
 	@echo "  [CC]  $<"
-	@$(CXX_LINK) $(CFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
+	@$(CXX_LINK) $(CFLAGS) -o $@ $< $(LDFLAGS) $(LIBS) -lSceIpmi -lSceAppInstUtil
 
 $(INSTALL_HELPER_BLOB): $(INSTALL_HELPER_ELF) tools/gen_blob.py
 	@mkdir -p $(dir $@)

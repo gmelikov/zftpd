@@ -63,6 +63,7 @@ int games_psx_install_path(const char *, char *, size_t, int *);
 int games_psx_pkg_title_id(const char *, char *, size_t);
 /* PS5: installation driven by the embedded helper. */
 int games_ps5_helper_install(const char *, const char *, int, int, char *, size_t, int *, int *);
+int games_ps5_helper_uninstall(const char *, int *);
 #endif
 #endif
 

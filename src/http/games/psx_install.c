@@ -252,6 +252,11 @@ int games_psx_uninstall(const char *title_id, int *out_rc) {
     return -1;
   }
 
+#if defined(PLATFORM_PS5) && ENABLE_PKG_INSTALL && defined(ZFTPD_INSTALL_HELPER)
+  /* The system installer API is only usable from a process the loader spawned
+   * (see ps5_install_helper.c), so uninstalling runs through the helper too. */
+  return games_ps5_helper_uninstall(title_id, out_rc);
+#else
   void *appinst = dlopen("/system/common/lib/libSceAppInstUtil.sprx",
                          RTLD_NOW | RTLD_GLOBAL);
   if (!appinst) {
@@ -279,6 +284,7 @@ int games_psx_uninstall(const char *title_id, int *out_rc) {
     *out_rc = rc;
   }
   return 0;
+#endif
 }
 
 #if ENABLE_PKG_INSTALL

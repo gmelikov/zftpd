@@ -297,4 +297,91 @@ int games_ps5_helper_install(const char *content_url, const char *source_path,
   return 0;
 }
 
+/* Uninstall runs through the same helper, synchronously: the API handler needs
+ * the outcome in its reply, and an uninstall is quick, so this delivers the
+ * helper, asks it to uninstall, and blocks for the DONE/ERROR line. */
+int games_ps5_helper_uninstall(const char *title_id, int *out_rc) {
+  if (title_id == NULL || out_rc == NULL) {
+    games_install_state_finish_detail(-1, "uninstall helper: missing title id");
+    return -1;
+  }
+
+  int listen_fd = listen_loopback(HELPER_IPC_PORT);
+  if (listen_fd < 0) {
+    games_install_state_finish_detail(-1, "uninstall helper: cannot listen on IPC port");
+    return -1;
+  }
+
+  int loader_fd = connect_loopback(HELPER_LOADER_PORT);
+  if (loader_fd < 0) {
+    games_install_state_finish_detail(-1, "uninstall helper: cannot reach the ELF loader");
+    (void)close(listen_fd);
+    return -1;
+  }
+
+  if (deliver_helper(loader_fd) != 0) {
+    games_install_state_finish_detail(-1, "uninstall helper: could not send helper to loader");
+    (void)close(loader_fd);
+    (void)close(listen_fd);
+    return -1;
+  }
+  (void)shutdown(loader_fd, SHUT_WR);
+  pthread_t drain_thread;
+  if (pthread_create(&drain_thread, NULL, drain_loader_output, (void *)(intptr_t)loader_fd) == 0) {
+    pthread_detach(drain_thread);
+  } else {
+    (void)close(loader_fd);
+  }
+
+  int helper_fd = -1;
+  struct pollfd ready = {listen_fd, POLLIN, 0};
+  if (poll(&ready, 1, HELPER_WAIT_MS) > 0 && (ready.revents & POLLIN) != 0)
+    helper_fd = accept(listen_fd, NULL, NULL);
+  (void)close(listen_fd);
+
+  if (helper_fd < 0) {
+    games_install_state_finish_detail(-1, "uninstall helper: helper did not connect back");
+    return -1;
+  }
+  struct timeval timeout = {30, 0};
+  (void)setsockopt(helper_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+  char request[256];
+  int request_len = snprintf(request, sizeof(request), "UNINSTALL %s %s 0\n", title_id, title_id);
+  if (request_len <= 0 || (size_t)request_len >= sizeof(request)) {
+    (void)close(helper_fd);
+    return -1;
+  }
+  if (send(helper_fd, request, strlen(request), 0) != (ssize_t)strlen(request)) {
+    (void)close(helper_fd);
+    return -1;
+  }
+
+  int rc = 0;
+  int got_result = 0;
+  char last_state[HELPER_LINE_MAX] = "";
+  char line[HELPER_LINE_MAX];
+  while (read_line(helper_fd, line, sizeof(line)) == 0) {
+    if (strncmp(line, "STATE", 5) == 0) { (void)snprintf(last_state, sizeof(last_state), "%s", line + 6); continue; }
+    if (strncmp(line, "DONE", 4) == 0) { rc = 0; got_result = 1; break; }
+    if (strncmp(line, "ERROR", 5) == 0) {
+      unsigned code = 0;
+      (void)sscanf(line + 5, "0x%X", &code);
+      rc = code != 0U ? -(int)code : -1;
+      got_result = 1;
+      break;
+    }
+  }
+  (void)close(helper_fd);
+
+  if (!got_result) {
+    char msg[256];
+    (void)snprintf(msg, sizeof(msg), "uninstall helper died at: %s", last_state[0] ? last_state : "before any state");
+    games_install_state_finish_detail(-1, msg);
+    return -1;
+  }
+  *out_rc = rc;
+  return 0;
+}
+
 #endif /* PLATFORM_PS5 && ENABLE_PKG_INSTALL && ZFTPD_INSTALL_HELPER */

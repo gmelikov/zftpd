@@ -8,7 +8,6 @@
  */
 
 #include <arpa/inet.h>
-#include <dlfcn.h>
 #include <netinet/in.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -18,9 +17,11 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <ps5/kernel.h>
 
 #define IPC_PORT 39481
 #define REQUEST_MAX 2048
+#define SHELLCORE_AUTHID 0x4800000000000006ULL
 
 typedef struct {
   const char *uri;
@@ -64,17 +65,14 @@ typedef struct {
   uint8_t is_copy_only;
 } install_status_t;
 
-typedef int (*fn_init_t)(void);
-typedef int (*fn_by_package_t)(const pkg_metadata_t *, pkg_info_t *,
-                                playgo_info_t *);
-typedef int (*fn_term_t)(void);
-typedef int (*fn_install_status_t)(const char *, install_status_t *);
-
-static const char *const k_library_paths[] = {
-    "/system/common/lib/libSceAppInstUtil.sprx",
-    "/system/common/lib/libSceAppInstUtil.suprx",
-    NULL,
-};
+#if defined(__PROSPERO__) || defined(PLATFORM_PS5)
+extern int sceAppInstUtilInitialize(void);
+extern int sceAppInstUtilAppUnInstall(const char *title_id, int *, int *);
+extern int sceAppInstUtilTerminate(void);
+extern int sceAppInstUtilInstallByPackage(const pkg_metadata_t *, pkg_info_t *,
+                                          playgo_info_t *);
+extern int sceAppInstUtilGetInstallStatus(const char *, install_status_t *);
+#endif
 
 static int connect_back(void) {
   struct sockaddr_in addr;
@@ -124,23 +122,6 @@ static void send_line(int fd, const char *format, ...) {
   (void)send(fd, line, (size_t)n + 1, 0);
 }
 
-static void *open_installer(fn_init_t *out_init, void **out_handle) {
-  for (size_t i = 0; k_library_paths[i] != NULL; i++) {
-    void *lib = dlopen(k_library_paths[i], RTLD_NOW | RTLD_GLOBAL);
-    if (lib == NULL) {
-      continue;
-    }
-    fn_init_t init = (fn_init_t)dlsym(lib, "sceAppInstUtilInitialize");
-    if (init != NULL) {
-      *out_init = init;
-      *out_handle = lib;
-      return lib;
-    }
-    (void)dlclose(lib);
-  }
-  return NULL;
-}
-
 static int read_line(int fd, char *out, size_t out_size) {
   size_t used = 0;
   while (used + 1U < out_size) {
@@ -159,16 +140,24 @@ static int read_line(int fd, char *out, size_t out_size) {
 }
 
 int main(void) {
+#if defined(__PROSPERO__) || defined(PLATFORM_PS5)
+  /* Escalate to the SYSTEM_PROCESS auth id (what etaHEN's DPI uses) so the
+   * installer/uninstall API's privilege check passes. The SDK's
+   * kernel_set_ucred_authid uses a stale double-indirection layout on 13.60,
+   * so write cr_sceAuthID at ucred+0x58 directly via kernel_copyin. */
+  {
+    intptr_t ucred = kernel_get_proc_ucred(getpid());
+    if (ucred != 0) {
+      uint64_t authid = SHELLCORE_AUTHID;
+      (void)kernel_copyin(&authid, ucred + 0x58, 8); /* cr_sceAuthID */
+    }
+  }
+#endif
+
   int fd = connect_back();
   if (fd < 0) {
     return 1;
   }
-
-  fn_init_t init = NULL;
-  fn_term_t term = NULL;
-  fn_install_status_t install_status = NULL;
-  fn_by_package_t by_package = NULL;
-  void *lib = NULL;
 
   char line[REQUEST_MAX];
   for (;;) {
@@ -197,23 +186,34 @@ int main(void) {
     memcpy(url, second + 1, (size_t)(last - second - 1));
     overwrite = last[1] == '1';
 
-    if (strcmp(kind, "INSTALL") != 0) {
+    if (strcmp(kind, "INSTALL") != 0 && strcmp(kind, "UNINSTALL") != 0) {
       send_line(fd, "ERROR 0 unknown request");
       continue;
     }
 
-    send_line(fd, "STATE opening the system installer");
-    if (lib == NULL && open_installer(&init, &lib) == NULL) {
-      send_line(fd, "ERROR 0 the system installer is unavailable");
-      continue;
-    }
-    if (init != NULL) {
-      int init_rc = init();
-      init = NULL;
+    if (strcmp(kind, "UNINSTALL") == 0) {
+      if (destination[0] == '\0') {
+        send_line(fd, "ERROR 0 bad request");
+        continue;
+      }
+      int init_rc = sceAppInstUtilInitialize();
       if (init_rc != 0) {
         send_line(fd, "ERROR 0x%08X installer init", (unsigned)init_rc);
         continue;
       }
+      int rc = sceAppInstUtilAppUnInstall(destination, NULL, NULL);
+      if (rc < 0) {
+        send_line(fd, "ERROR 0x%08X uninstall", (unsigned)rc);
+      } else {
+        send_line(fd, "DONE 0");
+      }
+      break;
+    }
+
+    int init_rc = sceAppInstUtilInitialize();
+    if (init_rc != 0) {
+      send_line(fd, "ERROR 0x%08X installer init", (unsigned)init_rc);
+      continue;
     }
 
     pkg_metadata_t metadata;
@@ -231,13 +231,7 @@ int main(void) {
     memset(&playgo_info, 0, sizeof(playgo_info));
 
     send_line(fd, "STATE installing");
-    by_package = (fn_by_package_t)dlsym(lib, "sceAppInstUtilInstallByPackage");
-    install_status = (fn_install_status_t)dlsym(lib, "sceAppInstUtilGetInstallStatus");
-    if (by_package == NULL || install_status == NULL) {
-      send_line(fd, "ERROR 0 installer API unavailable");
-      continue;
-    }
-    int result = by_package(&metadata, &pkg_info, &playgo_info);
+    int result = sceAppInstUtilInstallByPackage(&metadata, &pkg_info, &playgo_info);
     (void)overwrite;
     (void)destination;
 
@@ -257,7 +251,7 @@ int main(void) {
     for (int step = 0; step < 3600; step++) {
       install_status_t status;
       memset(&status, 0, sizeof(status));
-      int status_rc = install_status(pkg_info.content_id, &status);
+      int status_rc = sceAppInstUtilGetInstallStatus(pkg_info.content_id, &status);
       if (status_rc == 0) {
         status.status[sizeof(status.status) - 1U] = '\0';
         if (status.error_info.error_code != 0) {
@@ -290,16 +284,10 @@ int main(void) {
     }
     if (!completed && !reported_error)
       send_line(fd, "ERROR 0 install did not complete before timeout");
-    term = (fn_term_t)dlsym(lib, "sceAppInstUtilTerminate");
-    if (term != NULL) {
-      (void)term();
-    }
+    (void)sceAppInstUtilTerminate();
     break;
   }
 
-  if (lib != NULL) {
-    (void)dlclose(lib);
-  }
   (void)close(fd);
   return 0;
 }

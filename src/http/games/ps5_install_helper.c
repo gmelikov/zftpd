@@ -366,8 +366,8 @@ int games_ps5_helper_uninstall(const char *title_id, int *out_rc) {
     if (strncmp(line, "DONE", 4) == 0) { rc = 0; got_result = 1; break; }
     if (strncmp(line, "ERROR", 5) == 0) {
       unsigned code = 0;
-      (void)sscanf(line + 5, "0x%X", &code);
-      rc = code != 0U ? -(int)code : -1;
+      (void)sscanf(line + 5, " 0x%X", &code);
+      rc = code != 0U ? (int)code : -1;
       got_result = 1;
       break;
     }

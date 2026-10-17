@@ -143,7 +143,7 @@ static int apply_helper_line(const char *line) {
   }
   if (strncmp(line, "ERROR", 5) == 0) {
     unsigned code = 0;
-    (void)sscanf(line + 5, "0x%X", &code);
+    (void)sscanf(line + 5, " 0x%X", &code);
     games_install_state_finish_detail(code != 0U ? (int)code : -1,
                                       line[5] == ' ' ? line + 6 : line);
     return -1;
@@ -366,8 +366,8 @@ int games_ps5_helper_uninstall(const char *title_id, int *out_rc) {
     if (strncmp(line, "DONE", 4) == 0) { rc = 0; got_result = 1; break; }
     if (strncmp(line, "ERROR", 5) == 0) {
       unsigned code = 0;
-      (void)sscanf(line + 5, "0x%X", &code);
-      rc = code != 0U ? -(int)code : -1;
+      (void)sscanf(line + 5, " 0x%X", &code);
+      rc = code != 0U ? (int)code : -1;
       got_result = 1;
       break;
     }
